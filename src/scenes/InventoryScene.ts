@@ -471,8 +471,9 @@ export class InventoryScene extends Phaser.Scene {
       placeBtn.setInteractive({ useHandCursor: true });
 
       placeBtn.on('pointerdown', () => {
+        // Use registry to pass data between scenes (more reliable than events)
+        this.registry.set('placingSpirit', spirit.id);
         this.scene.stop();
-        this.scene.get('GameScene').events.emit('placeSpirit', spirit.id);
       });
 
       this.detailContainer.add(placeBtn);

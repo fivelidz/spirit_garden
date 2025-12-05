@@ -11,6 +11,7 @@ interface SpiritGameObject {
   spiritData: SpiritData;
   baseY: number;
   floatOffset: number;
+  synergyGlow?: Phaser.GameObjects.Graphics;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -24,6 +25,8 @@ export class GameScene extends Phaser.Scene {
 
   private gridCells: Phaser.GameObjects.Image[][] = [];
   private spirits: Map<string, SpiritGameObject> = new Map();
+  private synergyLines!: Phaser.GameObjects.Graphics;
+  private placementIndicator!: Phaser.GameObjects.Text;
 
   private selectedInventorySpirit: string | null = null;
   private autoSaveTimer!: Phaser.Time.TimerEvent;
@@ -38,8 +41,15 @@ export class GameScene extends Phaser.Scene {
 
     this.createUI();
     this.createGrid();
+
+    // Create synergy lines layer (below spirits)
+    this.synergyLines = this.add.graphics();
+
     this.loadSpirits();
     this.setupAutoSave();
+
+    // Draw initial synergy connections
+    this.updateSynergyVisuals();
 
     // Check for offline earnings
     const offlineEarnings = this.registry.get('offlineEarnings');
@@ -48,7 +58,19 @@ export class GameScene extends Phaser.Scene {
       this.registry.remove('offlineEarnings');
     }
 
-    // Listen for inventory selection
+    // Placement indicator (hidden by default)
+    this.placementIndicator = this.add.text(GAME_CONFIG.WIDTH / 2, 150, '', {
+      fontFamily: 'Arial',
+      fontSize: '20px',
+      color: '#4ade80',
+      backgroundColor: '#000000cc',
+      padding: { x: 15, y: 8 },
+    });
+    this.placementIndicator.setOrigin(0.5, 0.5);
+    this.placementIndicator.setVisible(false);
+    this.placementIndicator.setDepth(100);
+
+    // Listen for inventory selection (legacy support)
     this.events.on('placeSpirit', this.handlePlaceSpirit, this);
   }
 
@@ -340,6 +362,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onSpiritClick(spirit: PlacedSpirit): void {
+    // If placing spirit, cancel placement mode
+    if (this.selectedInventorySpirit) {
+      this.cancelPlacement();
+      return;
+    }
+
     // Activate tap bonus
     this.productionSystem.activateTapBonus();
 
@@ -350,10 +378,15 @@ export class GameScene extends Phaser.Scene {
         spirit,
         this.saveSystem.getSave().placedSpirits
       );
-      this.showMessage(
-        `${spiritData.name} (Lv.${spirit.level})\n` +
-        `Production: ${production.totalProduction.toFixed(1)}/s`
-      );
+
+      let message = `${spiritData.name} (Lv.${spirit.level})\n`;
+      message += `Production: ${production.totalProduction.toFixed(1)}/s`;
+
+      if (production.synergyBonus > 0) {
+        message += `\n+${(production.synergyBonus * 100).toFixed(0)}% Synergy Bonus!`;
+      }
+
+      this.showMessage(message);
     }
 
     // Tap visual effect
@@ -407,7 +440,38 @@ export class GameScene extends Phaser.Scene {
 
   private handlePlaceSpirit(spiritId: string): void {
     this.selectedInventorySpirit = spiritId;
-    this.showMessage('Tap a cell to place spirit');
+    const spiritData = getSpiritById(spiritId);
+    if (spiritData) {
+      this.placementIndicator.setText(`Placing: ${spiritData.name} - Tap an empty cell`);
+      this.placementIndicator.setVisible(true);
+      // Highlight available cells
+      this.highlightEmptyCells(true);
+    }
+  }
+
+  private highlightEmptyCells(highlight: boolean): void {
+    const save = this.saveSystem.getSave();
+    for (let row = 0; row < GAME_CONFIG.GRID_ROWS; row++) {
+      for (let col = 0; col < GAME_CONFIG.GRID_COLS; col++) {
+        const cellIndex = row * GAME_CONFIG.GRID_COLS + col;
+        if (cellIndex >= save.unlockedCells) continue;
+
+        const cell = this.gridCells[row][col];
+        const hasSpirit = save.placedSpirits.some(s => s.gridX === col && s.gridY === row);
+
+        if (highlight && !hasSpirit) {
+          cell.setTint(0x4ade80); // Green tint for available cells
+        } else {
+          cell.clearTint();
+        }
+      }
+    }
+  }
+
+  private cancelPlacement(): void {
+    this.selectedInventorySpirit = null;
+    this.placementIndicator.setVisible(false);
+    this.highlightEmptyCells(false);
   }
 
   private placeSpiritFromInventory(spiritId: string, gridX: number, gridY: number): void {
@@ -427,6 +491,92 @@ export class GameScene extends Phaser.Scene {
     this.saveSystem.placeSpirit(newSpirit);
     this.saveSystem.save();
     this.createSpiritVisual(newSpirit);
+
+    // Update synergy visuals
+    this.updateSynergyVisuals();
+
+    // Hide placement UI
+    this.placementIndicator.setVisible(false);
+    this.highlightEmptyCells(false);
+
+    // Show success message
+    const spiritData = getSpiritById(spiritId);
+    if (spiritData) {
+      this.showMessage(`${spiritData.name} placed!`);
+    }
+  }
+
+  private updateSynergyVisuals(): void {
+    this.synergyLines.clear();
+
+    const save = this.saveSystem.getSave();
+    const drawnConnections = new Set<string>();
+
+    save.placedSpirits.forEach((spirit) => {
+      const spiritData = getSpiritById(spirit.spiritId);
+      if (!spiritData || !spiritData.synergies) return;
+
+      const spiritX = GAME_CONFIG.GRID_OFFSET_X + spirit.gridX * GAME_CONFIG.CELL_SIZE + GAME_CONFIG.CELL_SIZE / 2;
+      const spiritY = GAME_CONFIG.GRID_OFFSET_Y + spirit.gridY * GAME_CONFIG.CELL_SIZE + GAME_CONFIG.CELL_SIZE / 2;
+
+      // Check adjacent spirits
+      const adjacentPositions = [
+        { x: spirit.gridX - 1, y: spirit.gridY },
+        { x: spirit.gridX + 1, y: spirit.gridY },
+        { x: spirit.gridX, y: spirit.gridY - 1 },
+        { x: spirit.gridX, y: spirit.gridY + 1 },
+      ];
+
+      adjacentPositions.forEach((pos) => {
+        const adjacentSpirit = save.placedSpirits.find(
+          (s) => s.gridX === pos.x && s.gridY === pos.y
+        );
+        if (!adjacentSpirit) return;
+
+        const adjacentData = getSpiritById(adjacentSpirit.spiritId);
+        if (!adjacentData) return;
+
+        // Check if this spirit has synergy with adjacent spirit
+        if (spiritData.synergies?.includes(adjacentData.element)) {
+          // Create unique key to avoid drawing same line twice
+          const key = [spirit.id, adjacentSpirit.id].sort().join('-');
+          if (drawnConnections.has(key)) return;
+          drawnConnections.add(key);
+
+          const adjX = GAME_CONFIG.GRID_OFFSET_X + pos.x * GAME_CONFIG.CELL_SIZE + GAME_CONFIG.CELL_SIZE / 2;
+          const adjY = GAME_CONFIG.GRID_OFFSET_Y + pos.y * GAME_CONFIG.CELL_SIZE + GAME_CONFIG.CELL_SIZE / 2;
+
+          // Draw glowing synergy line
+          this.synergyLines.lineStyle(6, 0x4ade80, 0.3);
+          this.synergyLines.lineBetween(spiritX, spiritY, adjX, adjY);
+          this.synergyLines.lineStyle(3, 0x4ade80, 0.6);
+          this.synergyLines.lineBetween(spiritX, spiritY, adjX, adjY);
+          this.synergyLines.lineStyle(1, 0xffffff, 0.8);
+          this.synergyLines.lineBetween(spiritX, spiritY, adjX, adjY);
+        }
+      });
+
+      // Update spirit's synergy glow
+      const spiritObj = this.spirits.get(spirit.id);
+      if (spiritObj) {
+        const hasSynergy = this.productionSystem.calculateSpiritProduction(
+          spirit,
+          save.placedSpirits
+        ).synergyBonus > 0;
+
+        if (hasSynergy && !spiritObj.synergyGlow) {
+          // Add synergy glow effect
+          const glow = this.add.graphics();
+          glow.lineStyle(3, 0x4ade80, 0.5);
+          glow.strokeCircle(0, 0, 38);
+          spiritObj.container.addAt(glow, 0);
+          spiritObj.synergyGlow = glow;
+        } else if (!hasSynergy && spiritObj.synergyGlow) {
+          spiritObj.synergyGlow.destroy();
+          spiritObj.synergyGlow = undefined;
+        }
+      }
+    });
   }
 
   private showMessage(text: string): void {
@@ -520,6 +670,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(time: number, delta: number): void {
+    // Check for spirit placement from inventory (via registry)
+    const placingSpirit = this.registry.get('placingSpirit');
+    if (placingSpirit) {
+      this.registry.remove('placingSpirit');
+      this.handlePlaceSpirit(placingSpirit);
+    }
+
     // Update production
     this.productionSystem.tick();
 
@@ -549,6 +706,12 @@ export class GameScene extends Phaser.Scene {
       const floatY = Math.sin(time * GAME_CONFIG.SPIRIT_FLOAT_SPEED + spirit.floatOffset) *
                      GAME_CONFIG.SPIRIT_FLOAT_AMPLITUDE;
       spirit.container.y = spirit.baseY + floatY;
+
+      // Pulse synergy glow
+      if (spirit.synergyGlow) {
+        const pulse = 0.5 + Math.sin(time * 0.003) * 0.3;
+        spirit.synergyGlow.setAlpha(pulse);
+      }
     });
   }
 

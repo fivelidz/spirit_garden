@@ -4,6 +4,7 @@ import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
 import { SummonScene } from './scenes/SummonScene';
 import { InventoryScene } from './scenes/InventoryScene';
+import { UpgradeScene } from './scenes/UpgradeScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -15,7 +16,7 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [BootScene, GameScene, SummonScene, InventoryScene],
+  scene: [BootScene, GameScene, SummonScene, InventoryScene, UpgradeScene],
 };
 
 new Phaser.Game(config);

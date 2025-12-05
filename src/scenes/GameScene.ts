@@ -161,15 +161,15 @@ export class GameScene extends Phaser.Scene {
       () => this.scene.launch('InventoryScene')
     );
 
-    // Upgrade button (placeholder)
+    // Upgrade button
     const upgradeBtn = this.createButton(
       startX + buttonWidth * 2.5 + spacing * 2,
       buttonY,
       buttonWidth,
       buttonHeight,
       'Upgrades',
-      UI_COLORS.PANEL_LIGHT,
-      () => this.showMessage('Coming soon!')
+      UI_COLORS.SUCCESS,
+      () => this.scene.launch('UpgradeScene')
     );
   }
 
@@ -251,6 +251,42 @@ export class GameScene extends Phaser.Scene {
         }
 
         this.gridCells[row][col] = cell;
+      }
+    }
+  }
+
+  private refreshGrid(): void {
+    // Update grid cells based on current unlocked count
+    const save = this.saveSystem.getSave();
+
+    for (let row = 0; row < GAME_CONFIG.GRID_ROWS; row++) {
+      for (let col = 0; col < GAME_CONFIG.GRID_COLS; col++) {
+        const cellIndex = row * GAME_CONFIG.GRID_COLS + col;
+        const isUnlocked = cellIndex < save.unlockedCells;
+        const cell = this.gridCells[row][col];
+
+        // Check if this cell just got unlocked
+        if (isUnlocked && !cell.getData('unlocked')) {
+          cell.setTexture('cell');
+          cell.setData('unlocked', true);
+          cell.setInteractive({ useHandCursor: true });
+          cell.on('pointerdown', () => this.onCellClick(col, row));
+          cell.on('pointerover', () => {
+            if (!this.saveSystem.getSpiritAtPosition(col, row)) {
+              cell.setTint(UI_COLORS.GRID_CELL_HOVER);
+            }
+          });
+          cell.on('pointerout', () => cell.clearTint());
+
+          // Flash effect for newly unlocked cell
+          this.tweens.add({
+            targets: cell,
+            alpha: 0.5,
+            duration: 200,
+            yoyo: true,
+            repeat: 2,
+          });
+        }
       }
     }
   }
@@ -675,6 +711,18 @@ export class GameScene extends Phaser.Scene {
     if (placingSpirit) {
       this.registry.remove('placingSpirit');
       this.handlePlaceSpirit(placingSpirit);
+    }
+
+    // Check for grid refresh signal (from UpgradeScene)
+    if (this.registry.get('refreshGrid')) {
+      this.registry.remove('refreshGrid');
+      this.refreshGrid();
+    }
+
+    // Check for synergy refresh signal (from UpgradeScene)
+    if (this.registry.get('refreshSynergies')) {
+      this.registry.remove('refreshSynergies');
+      this.updateSynergyVisuals();
     }
 
     // Update production

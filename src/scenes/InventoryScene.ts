@@ -242,10 +242,14 @@ export class InventoryScene extends Phaser.Scene {
     name.setOrigin(0.5, 0.5);
 
     container.add([bg, spiritGlow, spiritBody, name]);
-    container.setSize(size, size);
-    container.setInteractive({ useHandCursor: true });
 
-    container.on('pointerdown', () => this.showSpiritDetail(spirit, true));
+    // Create explicit hit area for the container
+    const hitArea = this.add.zone(size / 2, size / 2, size, size);
+    hitArea.setInteractive({ useHandCursor: true });
+    hitArea.on('pointerdown', () => this.showSpiritDetail(spirit, true));
+    hitArea.on('pointerover', () => bg.setAlpha(0.8));
+    hitArea.on('pointerout', () => bg.setAlpha(1));
+    container.add(hitArea);
 
     this.inventoryContainer.add(container);
   }
